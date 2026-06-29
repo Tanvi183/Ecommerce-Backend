@@ -24,6 +24,10 @@ const userSchema = new mongoose.Schema(
       enum: ['CUSTOMER', 'ADMIN'],
       default: 'CUSTOMER',
     },
+    newsletter: {
+      type: Boolean,
+      default: false,
+    },
     address: {
       street: String,
       city: String,

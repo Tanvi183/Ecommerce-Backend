@@ -1,3 +1,7 @@
+// DNS MUST be configured first, before any network calls
+const dns = require('node:dns');
+dns.setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -30,9 +34,6 @@ app.use(cookieParser());
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
-// app.use('/api/products', require('./routes/productRoutes'));
-// app.use('/api/categories', require('./routes/categoryRoutes'));
-// app.use('/api/orders', require('./routes/orderRoutes'));
 
 app.get('/', (req, res) => {
   res.send('API is running...');

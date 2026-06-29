@@ -27,7 +27,7 @@ const setRefreshTokenCookie = (res, refreshToken) => {
 // @access  Public
 const registerUser = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone, newsletter } = req.body;
 
     const userExists = await User.findOne({ email });
 
@@ -39,6 +39,8 @@ const registerUser = async (req, res) => {
       name,
       email,
       password,
+      phone,
+      newsletter: newsletter || false,
       role: 'CUSTOMER',
     });
 

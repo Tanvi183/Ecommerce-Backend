@@ -7,7 +7,9 @@ const connectDB = async () => {
         version: '1',
         strict: true,
         deprecationErrors: true,
-      }
+      },
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
     });
     
     // Send a ping to confirm a successful connection
@@ -18,7 +20,7 @@ const connectDB = async () => {
     
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`MongoDB Connection Error: ${error.message}`);
     process.exit(1);
   }
 };
