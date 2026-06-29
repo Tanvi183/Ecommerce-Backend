@@ -171,4 +171,122 @@ const getUserProfile = async (req, res) => {
   }
 };
 
-module.exports = { registerUser, loginUser, refreshToken, logoutUser, getUserProfile };
+// @desc    Update user profile
+// @route   PUT /api/auth/profile
+// @access  Private
+const updateProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (user) {
+      user.name = req.body.name || user.name;
+      user.email = req.body.email || user.email;
+      user.phone = req.body.phone !== undefined ? req.body.phone : user.phone;
+
+      const updatedUser = await user.save();
+
+      res.json({
+        success: true,
+        data: {
+          id: updatedUser._id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+        }
+      });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    if (error.code === 11000) {
+        return res.status(400).json({ success: false, message: 'Email is already in use' });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Update user password
+// @route   PUT /api/auth/password
+// @access  Private
+const updatePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (user) {
+      if (!(await user.matchPassword(currentPassword))) {
+        return res.status(400).json({ success: false, message: 'Incorrect current password' });
+      }
+
+      user.password = newPassword;
+      await user.save();
+
+      res.json({ success: true, message: 'Password updated successfully' });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Update user address
+// @route   PUT /api/auth/address
+// @access  Private
+const updateAddress = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (user) {
+      user.address = {
+        street: req.body.street || user.address?.street || '',
+        city: req.body.city || user.address?.city || '',
+        state: req.body.state || user.address?.state || '',
+        zip: req.body.zip || user.address?.zip || '',
+        country: req.body.country || user.address?.country || '',
+      };
+
+      await user.save();
+      res.json({ success: true, message: 'Address updated successfully', address: user.address });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Update user newsletter subscription
+// @route   PUT /api/auth/newsletter
+// @access  Private
+const updateNewsletter = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (user) {
+      user.newsletter = req.body.newsletter;
+      await user.save();
+      res.json({ success: true, message: 'Newsletter subscription updated successfully' });
+    } else {
+      res.status(404).json({ success: false, message: 'User not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+module.exports = { 
+  registerUser, 
+  loginUser, 
+  refreshToken, 
+  logoutUser, 
+  getUserProfile,
+  updateProfile,
+  updatePassword,
+  updateAddress,
+  updateNewsletter
+};
