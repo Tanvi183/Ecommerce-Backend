@@ -34,6 +34,15 @@ app.use(cookieParser());
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/brands', require('./routes/brandRoutes'));
+app.use('/api/categories', require('./routes/categoryRoutes'));
+app.use('/api/products', require('./routes/productRoutes'));
+app.use('/api/orders', require('./routes/orderRoutes'));
+// Mount reviews on both products and directly for admin deletion
+app.use('/api/products/:productId/reviews', require('./routes/reviewRoutes'));
+app.use('/api/reviews', require('./routes/reviewRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
+app.use('/api/features', require('./routes/featureRoutes'));
 
 app.get('/', (req, res) => {
   res.send('API is running...');
