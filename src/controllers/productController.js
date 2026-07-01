@@ -7,7 +7,7 @@ const Brand = require('../models/Brand');
 // @access  Public
 const getProducts = async (req, res) => {
   try {
-    const { category, subCategory, brand, minPrice, maxPrice, rating, inStock, search, sort } = req.query;
+    const { category, subCategory, brand, minPrice, maxPrice, rating, inStock, search, sort, isOnSale } = req.query;
     
     // Pagination
     const page = parseInt(req.query.page, 10) || 1;
@@ -45,6 +45,13 @@ const getProducts = async (req, res) => {
     // Rating
     if (rating) {
       query.rating = { $gte: Number(rating) };
+    }
+
+    // Offers
+    if (isOnSale === 'true') {
+      query.isOnSale = true;
+    } else if (isOnSale === 'false') {
+      query.isOnSale = false;
     }
 
     // Stock Status

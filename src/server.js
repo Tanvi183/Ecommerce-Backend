@@ -43,6 +43,7 @@ app.use('/api/products/:productId/reviews', require('./routes/reviewRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/features', require('./routes/featureRoutes'));
+app.use('/api/settings', require('./routes/settingsRoutes'));
 
 app.get('/', (req, res) => {
   res.send('API is running...');
