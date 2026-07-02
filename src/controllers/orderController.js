@@ -1,5 +1,11 @@
-const Order = require('../models/Order');
-const Product = require('../models/Product');
+const prisma = require('../lib/prisma');
+
+// Compute stock status helper
+const computeStockStatus = (stock) => {
+  if (stock === 0) return 'out_of_stock';
+  if (stock <= 10) return 'low_stock';
+  return 'in_stock';
+};
 
 // @desc    Create new order
 // @route   POST /api/orders
@@ -14,7 +20,7 @@ const createOrder = async (req, res) => {
 
     // Verify stock and decrement
     for (const item of items) {
-      const product = await Product.findById(item.productId);
+      const product = await prisma.product.findUnique({ where: { id: item.productId } });
       if (!product) {
          return res.status(404).json({ success: false, message: `Product not found: ${item.name}` });
       }
@@ -25,19 +31,38 @@ const createOrder = async (req, res) => {
 
     // Decrement stock for all items
     for (const item of items) {
-      const product = await Product.findById(item.productId);
-      product.stock -= item.quantity;
-      await product.save(); // pre-save hook handles stockStatus
+      const product = await prisma.product.findUnique({ where: { id: item.productId } });
+      const newStock = product.stock - item.quantity;
+      await prisma.product.update({
+        where: { id: item.productId },
+        data: {
+          stock: newStock,
+          stockStatus: computeStockStatus(newStock)
+        }
+      });
     }
 
-    const order = await Order.create({
-      userId: req.user._id,
-      items,
-      shippingAddress: shippingAddress || req.user.address,
-      paymentMethod,
-      total,
-      status: 'pending',
-      paymentStatus: 'unpaid'
+    // Create order
+    // Ensure item fields match OrderItem type
+    const mappedItems = items.map(i => ({
+      productId: i.productId,
+      name: i.name,
+      thumbnail: i.thumbnail,
+      slug: i.slug,
+      price: Number(i.price),
+      quantity: Number(i.quantity)
+    }));
+
+    const order = await prisma.order.create({
+      data: {
+        userId: req.user.id,
+        items: mappedItems,
+        shippingAddress: shippingAddress || req.user.address || {},
+        paymentMethod,
+        total: Number(total),
+        status: 'pending',
+        paymentStatus: 'unpaid'
+      }
     });
 
     res.status(201).json({ success: true, data: order, message: 'Order created successfully' });
@@ -54,14 +79,16 @@ const getMyOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    const total = await Order.countDocuments({ userId: req.user._id });
+    const total = await prisma.order.count({ where: { userId: req.user.id } });
 
-    const orders = await Order.find({ userId: req.user._id })
-      .sort({ createdAt: -1 })
-      .skip(startIndex)
-      .limit(limit);
+    const orders = await prisma.order.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit
+    });
 
     res.json({
       success: true,
@@ -82,18 +109,26 @@ const getMyOrders = async (req, res) => {
 // @access  Private
 const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate('userId', 'name email');
+    const order = await prisma.order.findUnique({
+      where: { id: req.params.id },
+      include: {
+        user: { select: { id: true, name: true, email: true } }
+      }
+    });
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     // Ensure user only views their own order or is an admin
-    if (order.userId._id.toString() !== req.user._id.toString() && req.user.role !== 'ADMIN') {
+    if (order.user.id !== req.user.id && req.user.role !== 'ADMIN') {
         return res.status(403).json({ success: false, message: 'Not authorized to view this order' });
     }
 
-    res.json({ success: true, data: order });
+    // To be backwards compatible with populated 'userId' field in Mongoose
+    const data = { ...order, userId: order.user, user: undefined };
+
+    res.json({ success: true, data });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -108,24 +143,31 @@ const getAllOrders = async (req, res) => {
     const { status } = req.query;
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 20;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    let query = {};
+    let where = {};
     if (status) {
-        query.status = status;
+        where.status = status;
     }
 
-    const total = await Order.countDocuments(query);
+    const total = await prisma.order.count({ where });
 
-    const orders = await Order.find(query)
-      .populate('userId', 'name email')
-      .sort({ createdAt: -1 })
-      .skip(startIndex)
-      .limit(limit);
+    const orders = await prisma.order.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, email: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit
+    });
+    
+    // Map user to userId for frontend compatibility
+    const mappedOrders = orders.map(o => ({ ...o, userId: o.user, user: undefined }));
 
     res.json({
       success: true,
-      data: orders,
+      data: mappedOrders,
       total,
       page,
       limit,
@@ -143,13 +185,17 @@ const getAllOrders = async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     const { status, paymentStatus } = req.body;
-    const order = await Order.findById(req.params.id);
+    const existingOrder = await prisma.order.findUnique({ where: { id: req.params.id } });
 
-    if (order) {
-      if (status) order.status = status;
-      if (paymentStatus) order.paymentStatus = paymentStatus;
+    if (existingOrder) {
+      const data = {};
+      if (status) data.status = status;
+      if (paymentStatus) data.paymentStatus = paymentStatus;
       
-      const updatedOrder = await order.save();
+      const updatedOrder = await prisma.order.update({
+        where: { id: req.params.id },
+        data
+      });
       res.json({ success: true, data: updatedOrder, message: 'Order status updated' });
     } else {
       res.status(404).json({ success: false, message: 'Order not found' });

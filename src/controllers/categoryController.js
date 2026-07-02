@@ -1,31 +1,32 @@
-const Category = require('../models/Category');
+const prisma = require('../lib/prisma');
 
 // @desc    Get all top-level categories and populate their subcategories
 // @route   GET /api/categories
 // @access  Public
 const getCategories = async (req, res) => {
   try {
-    const categories = await Category.find({ isActive: true }).sort({ name: 1 }).lean();
+    const categories = await prisma.category.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' }
+    });
     
     // Create a map of categories
     const categoryMap = {};
     categories.forEach(cat => {
-      categoryMap[cat._id.toString()] = { ...cat, children: [] };
+      // Add _id for backward compatibility with frontend if it expects _id
+      categoryMap[cat.id] = { ...cat, _id: cat.id, children: [] };
     });
 
     const data = [];
 
     // Build the tree
     categories.forEach(cat => {
-      const catWithChildren = categoryMap[cat._id.toString()];
+      const catWithChildren = categoryMap[cat.id];
       if (cat.parentId) {
         // If it has a parent, add it to the parent's children array
-        const parentIdStr = cat.parentId.toString();
+        const parentIdStr = cat.parentId;
         if (categoryMap[parentIdStr]) {
           categoryMap[parentIdStr].children.push(catWithChildren);
-        } else {
-          // If parent is not active/found, we might treat it as top-level or just ignore. 
-          // Ignoring for now to maintain strict tree structure.
         }
       } else {
         // Top-level category
@@ -42,12 +43,17 @@ const getCategories = async (req, res) => {
 
 const getCategoryBySlug = async (req, res) => {
   try {
-    const category = await Category.findOne({ slug: req.params.slug, isActive: true }).lean();
+    const category = await prisma.category.findUnique({
+      where: { slug: req.params.slug }
+    });
 
-    if (category) {
-      const children = await Category.find({ parentId: category._id, isActive: true }).sort({ name: 1 }).lean();
-      category.children = children;
-      res.json({ success: true, data: category });
+    if (category && category.isActive) {
+      const children = await prisma.category.findMany({
+        where: { parentId: category.id, isActive: true },
+        orderBy: { name: 'asc' }
+      });
+      const data = { ...category, _id: category.id, children: children.map(c => ({...c, _id: c.id})) };
+      res.json({ success: true, data });
     } else {
       res.status(404).json({ success: false, message: 'Category not found' });
     }
@@ -62,16 +68,23 @@ const getCategoryBySlug = async (req, res) => {
 // @access  Public
 const getSubCategoriesByParent = async (req, res) => {
   try {
-    const parentCategory = await Category.findOne({ slug: req.params.slug, isActive: true });
+    const parentCategory = await prisma.category.findUnique({
+      where: { slug: req.params.slug }
+    });
     
-    if (!parentCategory) {
+    if (!parentCategory || !parentCategory.isActive) {
       return res.status(404).json({ success: false, message: 'Parent category not found' });
     }
 
-    const subCategories = await Category.find({ parentId: parentCategory._id, isActive: true })
-      .sort({ name: 1 });
+    const subCategories = await prisma.category.findMany({
+      where: { parentId: parentCategory.id, isActive: true },
+      orderBy: { name: 'asc' }
+    });
 
-    res.json({ success: true, data: subCategories });
+    // Add _id for backwards compatibility
+    const data = subCategories.map(c => ({ ...c, _id: c.id }));
+
+    res.json({ success: true, data });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -85,28 +98,30 @@ const createCategory = async (req, res) => {
   try {
     const { name, slug, description, image, parentId, isActive } = req.body;
     
-    const categoryExists = await Category.findOne({ slug });
+    const categoryExists = await prisma.category.findUnique({ where: { slug } });
     if (categoryExists) {
       return res.status(400).json({ success: false, message: 'Category slug already exists' });
     }
 
     if (parentId) {
-      const parentExists = await Category.findById(parentId);
+      const parentExists = await prisma.category.findUnique({ where: { id: parentId } });
       if (!parentExists) {
         return res.status(400).json({ success: false, message: 'Parent category not found' });
       }
     }
 
-    const category = await Category.create({
-      name,
-      slug,
-      description,
-      image,
-      parentId: parentId || null,
-      isActive,
+    const category = await prisma.category.create({
+      data: {
+        name,
+        slug,
+        description,
+        image,
+        parentId: parentId || null,
+        isActive: isActive !== undefined ? isActive : true,
+      }
     });
 
-    res.status(201).json({ success: true, data: category, message: 'Category created successfully' });
+    res.status(201).json({ success: true, data: { ...category, _id: category.id }, message: 'Category created successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -118,21 +133,26 @@ const createCategory = async (req, res) => {
 // @access  Private/Admin
 const updateCategory = async (req, res) => {
   try {
-    const category = await Category.findById(req.params.id);
+    const existingCat = await prisma.category.findUnique({ where: { id: req.params.id } });
 
-    if (category) {
-      category.name = req.body.name || category.name;
-      category.slug = req.body.slug || category.slug;
-      category.description = req.body.description !== undefined ? req.body.description : category.description;
-      category.image = req.body.image || category.image;
-      category.isActive = req.body.isActive !== undefined ? req.body.isActive : category.isActive;
+    if (existingCat) {
+      const data = {
+        name: req.body.name || existingCat.name,
+        slug: req.body.slug || existingCat.slug,
+        description: req.body.description !== undefined ? req.body.description : existingCat.description,
+        image: req.body.image || existingCat.image,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : existingCat.isActive,
+      };
       
       if (req.body.parentId !== undefined) {
-          category.parentId = req.body.parentId || null;
+        data.parentId = req.body.parentId || null;
       }
 
-      const updatedCategory = await category.save();
-      res.json({ success: true, data: updatedCategory, message: 'Category updated successfully' });
+      const updatedCategory = await prisma.category.update({
+        where: { id: req.params.id },
+        data
+      });
+      res.json({ success: true, data: { ...updatedCategory, _id: updatedCategory.id }, message: 'Category updated successfully' });
     } else {
       res.status(404).json({ success: false, message: 'Category not found' });
     }
@@ -147,16 +167,16 @@ const updateCategory = async (req, res) => {
 // @access  Private/Admin
 const deleteCategory = async (req, res) => {
   try {
-    const category = await Category.findById(req.params.id);
+    const category = await prisma.category.findUnique({ where: { id: req.params.id } });
 
     if (category) {
       // Check if it has children
-      const childrenCount = await Category.countDocuments({ parentId: category._id });
+      const childrenCount = await prisma.category.count({ where: { parentId: category.id } });
       if (childrenCount > 0) {
         return res.status(400).json({ success: false, message: 'Cannot delete category with sub-categories' });
       }
 
-      await category.deleteOne();
+      await prisma.category.delete({ where: { id: req.params.id } });
       res.json({ success: true, message: 'Category removed' });
     } else {
       res.status(404).json({ success: false, message: 'Category not found' });

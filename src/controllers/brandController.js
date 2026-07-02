@@ -1,12 +1,17 @@
-const Brand = require('../models/Brand');
+const prisma = require('../lib/prisma');
 
 // @desc    Get all active brands
 // @route   GET /api/brands
 // @access  Public
 const getBrands = async (req, res) => {
   try {
-    const brands = await Brand.find({ isActive: true }).sort({ name: 1 });
-    res.json({ success: true, data: brands });
+    const brands = await prisma.brand.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' }
+    });
+    // Add _id for backwards compatibility
+    const data = brands.map(b => ({ ...b, _id: b.id }));
+    res.json({ success: true, data });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -18,9 +23,11 @@ const getBrands = async (req, res) => {
 // @access  Public
 const getBrandBySlug = async (req, res) => {
   try {
-    const brand = await Brand.findOne({ slug: req.params.slug, isActive: true });
-    if (brand) {
-      res.json({ success: true, data: brand });
+    const brand = await prisma.brand.findUnique({
+      where: { slug: req.params.slug }
+    });
+    if (brand && brand.isActive) {
+      res.json({ success: true, data: { ...brand, _id: brand.id } });
     } else {
       res.status(404).json({ success: false, message: 'Brand not found' });
     }
@@ -36,21 +43,23 @@ const getBrandBySlug = async (req, res) => {
 const createBrand = async (req, res) => {
   try {
     const { name, slug, logo, href, isActive } = req.body;
-    const brandExists = await Brand.findOne({ slug });
+    const brandExists = await prisma.brand.findUnique({ where: { slug } });
 
     if (brandExists) {
       return res.status(400).json({ success: false, message: 'Brand slug already exists' });
     }
 
-    const brand = await Brand.create({
-      name,
-      slug,
-      logo,
-      href,
-      isActive,
+    const brand = await prisma.brand.create({
+      data: {
+        name,
+        slug,
+        logo,
+        href,
+        isActive: isActive !== undefined ? isActive : true,
+      }
     });
 
-    res.status(201).json({ success: true, data: brand, message: 'Brand created successfully' });
+    res.status(201).json({ success: true, data: { ...brand, _id: brand.id }, message: 'Brand created successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -62,17 +71,22 @@ const createBrand = async (req, res) => {
 // @access  Private/Admin
 const updateBrand = async (req, res) => {
   try {
-    const brand = await Brand.findById(req.params.id);
+    const existingBrand = await prisma.brand.findUnique({ where: { id: req.params.id } });
 
-    if (brand) {
-      brand.name = req.body.name || brand.name;
-      brand.slug = req.body.slug || brand.slug;
-      brand.logo = req.body.logo || brand.logo;
-      brand.href = req.body.href !== undefined ? req.body.href : brand.href;
-      brand.isActive = req.body.isActive !== undefined ? req.body.isActive : brand.isActive;
+    if (existingBrand) {
+      const data = {
+        name: req.body.name || existingBrand.name,
+        slug: req.body.slug || existingBrand.slug,
+        logo: req.body.logo || existingBrand.logo,
+        href: req.body.href !== undefined ? req.body.href : existingBrand.href,
+        isActive: req.body.isActive !== undefined ? req.body.isActive : existingBrand.isActive,
+      };
 
-      const updatedBrand = await brand.save();
-      res.json({ success: true, data: updatedBrand, message: 'Brand updated successfully' });
+      const updatedBrand = await prisma.brand.update({
+        where: { id: req.params.id },
+        data
+      });
+      res.json({ success: true, data: { ...updatedBrand, _id: updatedBrand.id }, message: 'Brand updated successfully' });
     } else {
       res.status(404).json({ success: false, message: 'Brand not found' });
     }
@@ -87,10 +101,10 @@ const updateBrand = async (req, res) => {
 // @access  Private/Admin
 const deleteBrand = async (req, res) => {
   try {
-    const brand = await Brand.findById(req.params.id);
+    const brand = await prisma.brand.findUnique({ where: { id: req.params.id } });
 
     if (brand) {
-      await brand.deleteOne();
+      await prisma.brand.delete({ where: { id: req.params.id } });
       res.json({ success: true, message: 'Brand removed' });
     } else {
       res.status(404).json({ success: false, message: 'Brand not found' });

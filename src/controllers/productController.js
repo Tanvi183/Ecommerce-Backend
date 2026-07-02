@@ -1,6 +1,4 @@
-const Product = require('../models/Product');
-const Category = require('../models/Category');
-const Brand = require('../models/Brand');
+const prisma = require('../lib/prisma');
 
 // @desc    Get all products (with pagination, filtering, sorting)
 // @route   GET /api/products
@@ -12,98 +10,102 @@ const getProducts = async (req, res) => {
     // Pagination
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 15;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    // Build query object
-    let query = {};
+    // Build where object
+    let where = {};
 
     // Filter by Category slug
     if (category) {
-      const categoryDoc = await Category.findOne({ slug: category });
-      if (categoryDoc) query.category = categoryDoc._id;
+      where.category = { slug: category };
     }
 
     // Filter by SubCategory slug
     if (subCategory) {
-      const subCategoryDoc = await Category.findOne({ slug: subCategory });
-      if (subCategoryDoc) query.subCategory = subCategoryDoc._id;
+      where.subCategory = { slug: subCategory };
     }
 
     // Filter by Brand slug
     if (brand) {
-      const brandDoc = await Brand.findOne({ slug: brand });
-      if (brandDoc) query.brand = brandDoc._id;
+      where.brand = { slug: brand };
     }
 
     // Price range
     if (minPrice || maxPrice) {
-      query.price = {};
-      if (minPrice) query.price.$gte = Number(minPrice);
-      if (maxPrice) query.price.$lte = Number(maxPrice);
+      where.price = {};
+      if (minPrice) where.price.gte = Number(minPrice);
+      if (maxPrice) where.price.lte = Number(maxPrice);
     }
 
     // Rating
     if (rating) {
-      query.rating = { $gte: Number(rating) };
+      where.rating = { gte: Number(rating) };
     }
 
     // Offers
     if (isOnSale === 'true') {
-      query.isOnSale = true;
+      where.isOnSale = true;
     } else if (isOnSale === 'false') {
-      query.isOnSale = false;
+      where.isOnSale = false;
     }
 
     // Stock Status
     if (inStock === 'true') {
-      query.stockStatus = { $in: ['in_stock', 'low_stock'] };
+      where.stockStatus = { in: ['in_stock', 'low_stock'] };
     } else if (inStock === 'false') {
-      query.stockStatus = 'out_of_stock';
+      where.stockStatus = 'out_of_stock';
     }
 
     // Search (name, sku, tags)
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { sku: { $regex: search, $options: 'i' } },
-        { tags: { $regex: search, $options: 'i' } }
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { tags: { has: search } }
       ];
     }
 
     // Sorting
-    let sortObj = { createdAt: -1 }; // default newest
+    let orderBy = { createdAt: 'desc' }; // default newest
     if (sort) {
       switch (sort) {
         case 'price-asc':
-          sortObj = { price: 1 };
+          orderBy = { price: 'asc' };
           break;
         case 'price-desc':
-          sortObj = { price: -1 };
+          orderBy = { price: 'desc' };
           break;
         case 'newest':
-          sortObj = { createdAt: -1 };
+          orderBy = { createdAt: 'desc' };
           break;
         case 'popular':
-          sortObj = { reviewCount: -1, rating: -1 };
+          orderBy = [
+            { reviewCount: 'desc' },
+            { rating: 'desc' }
+          ];
           break;
         case 'name-asc':
-          sortObj = { name: 1 };
+          orderBy = { name: 'asc' };
           break;
         case 'name-desc':
-          sortObj = { name: -1 };
+          orderBy = { name: 'desc' };
           break;
       }
     }
 
     // Execute query
-    const total = await Product.countDocuments(query);
-    const products = await Product.find(query)
-      .populate('category', 'name slug')
-      .populate('subCategory', 'name slug')
-      .populate('brand', 'name slug')
-      .sort(sortObj)
-      .skip(startIndex)
-      .limit(limit);
+    const total = await prisma.product.count({ where });
+    const products = await prisma.product.findMany({
+      where,
+      include: {
+        category: { select: { name: true, slug: true } },
+        subCategory: { select: { name: true, slug: true } },
+        brand: { select: { name: true, slug: true } }
+      },
+      orderBy,
+      skip,
+      take: limit
+    });
 
     res.json({
       success: true,
@@ -124,10 +126,14 @@ const getProducts = async (req, res) => {
 // @access  Public
 const getProductBySlug = async (req, res) => {
   try {
-    const product = await Product.findOne({ slug: req.params.slug })
-      .populate('category', 'name slug')
-      .populate('subCategory', 'name slug')
-      .populate('brand', 'name slug logo');
+    const product = await prisma.product.findUnique({
+      where: { slug: req.params.slug },
+      include: {
+        category: { select: { name: true, slug: true } },
+        subCategory: { select: { name: true, slug: true } },
+        brand: { select: { name: true, slug: true, logo: true } }
+      }
+    });
 
     if (product) {
       res.json({ success: true, data: product });
@@ -145,18 +151,24 @@ const getProductBySlug = async (req, res) => {
 // @access  Public
 const getRelatedProducts = async (req, res) => {
   try {
-    const currentProduct = await Product.findOne({ slug: req.params.slug });
+    const currentProduct = await prisma.product.findUnique({
+      where: { slug: req.params.slug }
+    });
     
     if (!currentProduct) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    const related = await Product.find({
-      category: currentProduct.category,
-      _id: { $ne: currentProduct._id }
-    })
-      .limit(8)
-      .populate('category', 'name slug');
+    const related = await prisma.product.findMany({
+      where: {
+        categoryId: currentProduct.categoryId,
+        id: { not: currentProduct.id }
+      },
+      take: 8,
+      include: {
+        category: { select: { name: true, slug: true } }
+      }
+    });
 
     res.json({ success: true, data: related });
   } catch (error) {
@@ -170,16 +182,20 @@ const getFlaggedProducts = async (req, res, flag) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 15;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    const query = { [flag]: true };
-    const total = await Product.countDocuments(query);
+    const where = { [flag]: true };
+    const total = await prisma.product.count({ where });
     
-    const products = await Product.find(query)
-      .populate('category', 'name slug')
-      .sort({ createdAt: -1 })
-      .skip(startIndex)
-      .limit(limit);
+    const products = await prisma.product.findMany({
+      where,
+      include: {
+        category: { select: { name: true, slug: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit
+    });
 
     res.json({
       success: true,
@@ -200,17 +216,29 @@ const getNewArrivals = (req, res) => getFlaggedProducts(req, res, 'isNew');
 const getBestSellers = (req, res) => getFlaggedProducts(req, res, 'isBestSeller');
 const getOnSaleProducts = (req, res) => getFlaggedProducts(req, res, 'isOnSale');
 
+// Compute stock status helper
+const computeStockStatus = (stock) => {
+  if (stock === 0) return 'out_of_stock';
+  if (stock <= 10) return 'low_stock';
+  return 'in_stock';
+};
+
 // @desc    Create a product
 // @route   POST /api/products
 // @access  Private/Admin
 const createProduct = async (req, res) => {
   try {
-    const productExists = await Product.findOne({ slug: req.body.slug });
+    const productExists = await prisma.product.findUnique({ where: { slug: req.body.slug } });
     if (productExists) {
       return res.status(400).json({ success: false, message: 'Product slug already exists' });
     }
 
-    const product = await Product.create(req.body);
+    const data = { ...req.body };
+    if (data.stock !== undefined) {
+      data.stockStatus = computeStockStatus(data.stock);
+    }
+
+    const product = await prisma.product.create({ data });
     res.status(201).json({ success: true, data: product, message: 'Product created successfully' });
   } catch (error) {
     console.error(error);
@@ -223,16 +251,23 @@ const createProduct = async (req, res) => {
 // @access  Private/Admin
 const updateProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true
+    const data = { ...req.body };
+    if (data.stock !== undefined) {
+      data.stockStatus = computeStockStatus(data.stock);
+    }
+
+    // prisma update will throw error if not found, so we check first or just try-catch
+    const productExists = await prisma.product.findUnique({ where: { id: req.params.id } });
+    if (!productExists) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const product = await prisma.product.update({
+      where: { id: req.params.id },
+      data
     });
 
-    if (product) {
-      res.json({ success: true, data: product, message: 'Product updated successfully' });
-    } else {
-      res.status(404).json({ success: false, message: 'Product not found' });
-    }
+    res.json({ success: true, data: product, message: 'Product updated successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -245,25 +280,32 @@ const updateProduct = async (req, res) => {
 const updateProductStock = async (req, res) => {
   try {
     const { quantity, operation } = req.body;
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: req.params.id } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
+    let newStock = product.stock;
     if (operation === 'set') {
-      product.stock = Number(quantity);
+      newStock = Number(quantity);
     } else if (operation === 'increment') {
-      product.stock += Number(quantity);
+      newStock += Number(quantity);
     } else if (operation === 'decrement') {
-      product.stock = Math.max(0, product.stock - Number(quantity));
+      newStock = Math.max(0, newStock - Number(quantity));
     } else {
       return res.status(400).json({ success: false, message: 'Invalid operation' });
     }
 
-    // stockStatus is automatically updated via pre-save hook in the model
-    await product.save();
-    res.json({ success: true, data: product, message: 'Stock updated successfully' });
+    const updatedProduct = await prisma.product.update({
+      where: { id: req.params.id },
+      data: {
+        stock: newStock,
+        stockStatus: computeStockStatus(newStock)
+      }
+    });
+
+    res.json({ success: true, data: updatedProduct, message: 'Stock updated successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -275,10 +317,10 @@ const updateProductStock = async (req, res) => {
 // @access  Private/Admin
 const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: req.params.id } });
 
     if (product) {
-      await product.deleteOne();
+      await prisma.product.delete({ where: { id: req.params.id } });
       res.json({ success: true, message: 'Product removed' });
     } else {
       res.status(404).json({ success: false, message: 'Product not found' });

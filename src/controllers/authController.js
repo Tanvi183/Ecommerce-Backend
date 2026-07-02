@@ -1,5 +1,6 @@
-const User = require('../models/User');
+const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
 const generateAccessToken = (id) => {
   return jwt.sign({ id }, process.env.ACCESS_TOKEN_SECRET, {
@@ -29,24 +30,29 @@ const registerUser = async (req, res) => {
   try {
     const { name, email, password, phone, newsletter } = req.body;
 
-    const userExists = await User.findOne({ email });
+    const userExists = await prisma.user.findUnique({ where: { email } });
 
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
 
-    const user = await User.create({
-      name,
-      email,
-      password,
-      phone,
-      newsletter: newsletter || false,
-      role: 'CUSTOMER',
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        phone,
+        newsletter: newsletter || false,
+        role: 'CUSTOMER',
+      }
     });
 
     if (user) {
-      const accessToken = generateAccessToken(user._id);
-      const refreshToken = generateRefreshToken(user._id);
+      const accessToken = generateAccessToken(user.id);
+      const refreshToken = generateRefreshToken(user.id);
       
       setRefreshTokenCookie(res, refreshToken);
 
@@ -54,7 +60,7 @@ const registerUser = async (req, res) => {
         success: true,
         accessToken,
         data: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -76,11 +82,11 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
 
-    if (user && (await user.matchPassword(password))) {
-      const accessToken = generateAccessToken(user._id);
-      const refreshToken = generateRefreshToken(user._id);
+    if (user && (await bcrypt.compare(password, user.password))) {
+      const accessToken = generateAccessToken(user.id);
+      const refreshToken = generateRefreshToken(user.id);
       
       setRefreshTokenCookie(res, refreshToken);
 
@@ -88,7 +94,7 @@ const loginUser = async (req, res) => {
         success: true,
         accessToken,
         data: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -117,13 +123,13 @@ const refreshToken = async (req, res) => {
     const decoded = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
     
     // Check if user still exists
-    const user = await User.findById(decoded.id);
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
     if (!user) {
       return res.status(401).json({ success: false, message: 'Not authorized, user not found' });
     }
 
     // Issue new access token
-    const accessToken = generateAccessToken(user._id);
+    const accessToken = generateAccessToken(user.id);
     
     res.json({
       success: true,
@@ -151,13 +157,13 @@ const logoutUser = (req, res) => {
 // @access  Private
 const getUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
 
     if (user) {
       res.json({
         success: true,
         data: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -176,32 +182,39 @@ const getUserProfile = async (req, res) => {
 // @access  Private
 const updateProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
+    const existingUser = await prisma.user.findUnique({ where: { id: req.user.id } });
 
-    if (user) {
-      user.name = req.body.name || user.name;
-      user.email = req.body.email || user.email;
-      user.phone = req.body.phone !== undefined ? req.body.phone : user.phone;
-
-      const updatedUser = await user.save();
-
-      res.json({
-        success: true,
-        data: {
-          id: updatedUser._id,
-          name: updatedUser.name,
-          email: updatedUser.email,
-          role: updatedUser.role,
-        }
-      });
-    } else {
-      res.status(404).json({ success: false, message: 'User not found' });
+    if (!existingUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
+    
+    if (req.body.email && req.body.email !== existingUser.email) {
+      const emailExists = await prisma.user.findUnique({ where: { email: req.body.email }});
+      if (emailExists) {
+        return res.status(400).json({ success: false, message: 'Email is already in use' });
+      }
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        name: req.body.name || existingUser.name,
+        email: req.body.email || existingUser.email,
+        phone: req.body.phone !== undefined ? req.body.phone : existingUser.phone,
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.role,
+      }
+    });
   } catch (error) {
     console.error(error);
-    if (error.code === 11000) {
-        return res.status(400).json({ success: false, message: 'Email is already in use' });
-    }
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
@@ -212,15 +225,20 @@ const updateProfile = async (req, res) => {
 const updatePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user._id);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
 
     if (user) {
-      if (!(await user.matchPassword(currentPassword))) {
+      if (!(await bcrypt.compare(currentPassword, user.password))) {
         return res.status(400).json({ success: false, message: 'Incorrect current password' });
       }
 
-      user.password = newPassword;
-      await user.save();
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+      await prisma.user.update({
+        where: { id: req.user.id },
+        data: { password: hashedPassword }
+      });
 
       res.json({ success: true, message: 'Password updated successfully' });
     } else {
@@ -237,10 +255,10 @@ const updatePassword = async (req, res) => {
 // @access  Private
 const updateAddress = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
 
     if (user) {
-      user.address = {
+      const addressData = {
         street: req.body.street || user.address?.street || '',
         city: req.body.city || user.address?.city || '',
         state: req.body.state || user.address?.state || '',
@@ -248,8 +266,12 @@ const updateAddress = async (req, res) => {
         country: req.body.country || user.address?.country || '',
       };
 
-      await user.save();
-      res.json({ success: true, message: 'Address updated successfully', address: user.address });
+      await prisma.user.update({
+        where: { id: req.user.id },
+        data: { address: addressData }
+      });
+      
+      res.json({ success: true, message: 'Address updated successfully', address: addressData });
     } else {
       res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -264,11 +286,13 @@ const updateAddress = async (req, res) => {
 // @access  Private
 const updateNewsletter = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
 
     if (user) {
-      user.newsletter = req.body.newsletter;
-      await user.save();
+      await prisma.user.update({
+        where: { id: req.user.id },
+        data: { newsletter: req.body.newsletter }
+      });
       res.json({ success: true, message: 'Newsletter subscription updated successfully' });
     } else {
       res.status(404).json({ success: false, message: 'User not found' });

@@ -1,0 +1,226 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGO_URI")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  email      String   @unique
+  password   String
+  phone      String?
+  role       Role     @default(CUSTOMER)
+  newsletter Boolean  @default(false)
+  address    Address?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  orders     Order[]
+  reviews    Review[]
+
+  @@map("users")
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+type Address {
+  street  String?
+  city    String?
+  state   String?
+  zip     String?
+  country String?
+  phone   String?
+}
+
+model Category {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  slug        String   @unique
+  description String?  @default("")
+  image       String?  @default("")
+  parentId    String?  @db.ObjectId
+  parent      Category? @relation("CategoryToCategory", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    Category[] @relation("CategoryToCategory")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products    Product[] @relation("ProductCategory")
+  subProducts Product[] @relation("ProductSubCategory")
+
+  @@map("categories")
+}
+
+model Brand {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  slug        String   @unique
+  logo        String?  @default("")
+  href        String?  @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products    Product[]
+
+  @@map("brands")
+}
+
+model Product {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  name             String
+  slug             String   @unique
+  description      String
+  shortDescription String?  @default("")
+  price            Float
+  originalPrice    Float?
+  discountPercent  Float    @default(0)
+  images           String[] @default([])
+  thumbnail        String
+  categoryId       String   @db.ObjectId
+  category         Category @relation("ProductCategory", fields: [categoryId], references: [id])
+  subCategoryId    String?  @db.ObjectId
+  subCategory      Category? @relation("ProductSubCategory", fields: [subCategoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  brandId          String?  @db.ObjectId
+  brand            Brand?   @relation(fields: [brandId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  tags             String[] @default([])
+  sku              String   @unique
+  stock            Int      @default(0)
+  stockStatus      String   @default("out_of_stock")
+  rating           Float    @default(0)
+  reviewCount      Int      @default(0)
+  isNew            Boolean  @default(false)
+  isHot            Boolean  @default(false)
+  isFeatured       Boolean  @default(false)
+  isBestSeller     Boolean  @default(false)
+  isOnSale         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  reviews          Review[]
+  orderItems       OrderItem[]
+
+  @@map("products")
+}
+
+model Review {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  productId  String   @db.ObjectId
+  product    Product  @relation(fields: [productId], references: [id])
+  userId     String   @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  userName   String
+  userAvatar String?  @default("")
+  rating     Int
+  title      String
+  body       String
+  isVerified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@map("reviews")
+}
+
+model Order {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String   @db.ObjectId
+  user            User     @relation(fields: [userId], references: [id])
+  items           OrderItem[]
+  status          String   @default("pending") // pending, processing, shipped, delivered, cancelled
+  total           Float
+  shippingAddress Address?
+  paymentMethod   String   @default("cash_on_delivery")
+  paymentStatus   String   @default("unpaid") // unpaid, paid, refunded
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("orders")
+}
+
+type OrderItem {
+  productId String   @db.ObjectId
+  name      String
+  thumbnail String
+  slug      String
+  price     Float
+  quantity  Int
+}
+
+model OtherFeature {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  slug        String   @unique
+  description String?  @default("")
+  image       String?  @default("")
+  parentId    String?  @db.ObjectId
+  parent      OtherFeature? @relation("FeatureToFeature", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    OtherFeature[] @relation("FeatureToFeature")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("otherfeatures")
+}
+
+model SiteSetting {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  header    HeaderSettings?
+  footer    FooterSettings?
+  banners   Banner[]
+  navLinks  NavLink[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sitesettings")
+}
+
+type HeaderSettings {
+  logo         String? @default("")
+  contactEmail String? @default("")
+  contactPhone String? @default("")
+}
+
+type FooterSettings {
+  aboutText String? @default("")
+  address   String? @default("")
+  phone     String? @default("")
+  email     String? @default("")
+  facebook  String? @default("")
+  instagram String? @default("")
+  twitter   String? @default("")
+  services  FooterService[]
+}
+
+type FooterService {
+  label String?
+  href  String?
+}
+
+type Banner {
+  id       String?
+  image    String
+  title    String?
+  subtitle String?
+  link     String?
+}
+
+type NavLink {
+  id       String?
+  label    String
+  href     String
+  isOffer  Boolean? @default(false)
+  subLinks SubLink[]
+}
+
+type SubLink {
+  label String?
+  href  String?
+}

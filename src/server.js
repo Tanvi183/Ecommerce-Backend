@@ -8,10 +8,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const connectDB = require('./config/db');
-
-// Connect to database
-connectDB();
+// removed mongoose connectDB
 
 const app = express();
 

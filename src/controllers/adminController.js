@@ -1,24 +1,21 @@
-const Order = require('../models/Order');
-const Product = require('../models/Product');
-const Category = require('../models/Category');
-const User = require('../models/User');
+const prisma = require('../lib/prisma');
 
 // @desc    Get dashboard statistics
 // @route   GET /api/admin/stats
 // @access  Private/Admin
 const getDashboardStats = async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const totalProducts = await Product.countDocuments();
-    const totalCategories = await Category.countDocuments();
-    const totalCustomers = await User.countDocuments({ role: 'CUSTOMER' });
+    const totalOrders = await prisma.order.count();
+    const totalProducts = await prisma.product.count();
+    const totalCategories = await prisma.category.count();
+    const totalCustomers = await prisma.user.count({ where: { role: 'CUSTOMER' } });
 
     // Calculate total revenue from delivered orders
-    const deliveredOrders = await Order.find({ status: 'delivered' });
+    const deliveredOrders = await prisma.order.findMany({ where: { status: 'delivered' } });
     const totalRevenue = deliveredOrders.reduce((acc, order) => acc + order.total, 0);
 
     // Get low stock products count
-    const lowStockCount = await Product.countDocuments({ stockStatus: { $in: ['low_stock', 'out_of_stock'] } });
+    const lowStockCount = await prisma.product.count({ where: { stockStatus: { in: ['low_stock', 'out_of_stock'] } } });
 
     res.json({
       success: true,
@@ -44,16 +41,28 @@ const getAllCustomers = async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 20;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    const query = { role: 'CUSTOMER' };
-    const total = await User.countDocuments(query);
+    const where = { role: 'CUSTOMER' };
+    const total = await prisma.user.count({ where });
 
-    const customers = await User.find(query)
-      .select('-password')
-      .sort({ createdAt: -1 })
-      .skip(startIndex)
-      .limit(limit);
+    const customers = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+        newsletter: true,
+        address: true,
+        createdAt: true,
+        updatedAt: true
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit
+    });
 
     res.json({
       success: true,
@@ -74,9 +83,20 @@ const getAllCustomers = async (req, res) => {
 // @access  Private/Admin
 const getLowStockProducts = async (req, res) => {
   try {
-    const products = await Product.find({ stockStatus: { $in: ['low_stock', 'out_of_stock'] } })
-      .select('name slug sku stock stockStatus thumbnail price')
-      .sort({ stock: 1 });
+    const products = await prisma.product.findMany({
+      where: { stockStatus: { in: ['low_stock', 'out_of_stock'] } },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        sku: true,
+        stock: true,
+        stockStatus: true,
+        thumbnail: true,
+        price: true
+      },
+      orderBy: { stock: 'asc' }
+    });
 
     res.json({ success: true, data: products });
   } catch (error) {

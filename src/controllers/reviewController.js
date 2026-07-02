@@ -1,5 +1,4 @@
-const Review = require('../models/Review');
-const Product = require('../models/Product');
+const prisma = require('../lib/prisma');
 
 // @desc    Get reviews for a product
 // @route   GET /api/products/:productId/reviews
@@ -8,15 +7,19 @@ const getProductReviews = async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
-    const startIndex = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-    const total = await Review.countDocuments({ productId: req.params.productId });
+    const total = await prisma.review.count({ where: { productId: req.params.productId } });
     
-    const reviews = await Review.find({ productId: req.params.productId })
-      .populate('userId', 'name avatar')
-      .sort({ createdAt: -1 })
-      .skip(startIndex)
-      .limit(limit);
+    const reviews = await prisma.review.findMany({
+      where: { productId: req.params.productId },
+      include: {
+        user: { select: { name: true } } // avatar not in Prisma User model but userName is in review
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit
+    });
 
     res.json({
       success: true,
@@ -40,41 +43,51 @@ const createReview = async (req, res) => {
     const { rating, title, body } = req.body;
     const productId = req.params.productId;
 
-    const product = await Product.findById(productId);
+    const product = await prisma.product.findUnique({ where: { id: productId } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
     // Check if user already reviewed
-    const alreadyReviewed = await Review.findOne({
-      productId,
-      userId: req.user._id,
+    const alreadyReviewed = await prisma.review.findUnique({
+      where: {
+        productId_userId: {
+          productId,
+          userId: req.user.id
+        }
+      }
     });
 
     if (alreadyReviewed) {
       return res.status(400).json({ success: false, message: 'Product already reviewed' });
     }
 
-    const review = await Review.create({
-      productId,
-      userId: req.user._id,
-      userName: req.user.name,
-      rating: Number(rating),
-      title,
-      body,
-      isVerified: true, // Assuming true if they bought it, could be verified elsewhere
+    const review = await prisma.review.create({
+      data: {
+        productId,
+        userId: req.user.id,
+        userName: req.user.name,
+        rating: Number(rating),
+        title,
+        body,
+        isVerified: true, 
+      }
     });
 
     // Recalculate product rating
-    const reviews = await Review.find({ productId });
+    const reviews = await prisma.review.findMany({ where: { productId } });
     
     const numReviews = reviews.length;
     const avgRating = reviews.reduce((acc, item) => item.rating + acc, 0) / numReviews;
 
-    product.reviewCount = numReviews;
-    product.rating = avgRating;
-    await product.save();
+    await prisma.product.update({
+      where: { id: productId },
+      data: {
+        reviewCount: numReviews,
+        rating: avgRating
+      }
+    });
 
     res.status(201).json({ success: true, data: review, message: 'Review added' });
   } catch (error) {
@@ -88,27 +101,32 @@ const createReview = async (req, res) => {
 // @access  Private/Admin
 const deleteReview = async (req, res) => {
   try {
-    const review = await Review.findById(req.params.id);
+    const review = await prisma.review.findUnique({ where: { id: req.params.id } });
 
     if (!review) {
       return res.status(404).json({ success: false, message: 'Review not found' });
     }
 
     const productId = review.productId;
-    await review.deleteOne();
+    await prisma.review.delete({ where: { id: req.params.id } });
 
     // Recalculate product rating
-    const product = await Product.findById(productId);
+    const product = await prisma.product.findUnique({ where: { id: productId } });
     if (product) {
-      const reviews = await Review.find({ productId });
+      const reviews = await prisma.review.findMany({ where: { productId } });
       const numReviews = reviews.length;
       
-      product.reviewCount = numReviews;
-      product.rating = numReviews > 0 
+      const newRating = numReviews > 0 
         ? reviews.reduce((acc, item) => item.rating + acc, 0) / numReviews
         : 0;
         
-      await product.save();
+      await prisma.product.update({
+        where: { id: productId },
+        data: {
+          reviewCount: numReviews,
+          rating: newRating
+        }
+      });
     }
 
     res.json({ success: true, message: 'Review deleted' });
