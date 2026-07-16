@@ -52,8 +52,9 @@ model Category {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  products    Product[] @relation("ProductCategory")
-  subProducts Product[] @relation("ProductSubCategory")
+  products       Product[] @relation("ProductCategory")
+  subProducts    Product[] @relation("ProductSubCategory")
+  subSubProducts Product[] @relation("ProductSubSubCategory")
 
   @@map("categories")
 }
@@ -88,6 +89,8 @@ model Product {
   category         Category @relation("ProductCategory", fields: [categoryId], references: [id])
   subCategoryId    String?  @db.ObjectId
   subCategory      Category? @relation("ProductSubCategory", fields: [subCategoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subSubCategoryId String?  @db.ObjectId
+  subSubCategory   Category? @relation("ProductSubSubCategory", fields: [subSubCategoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   brandId          String?  @db.ObjectId
   brand            Brand?   @relation(fields: [brandId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   tags             String[] @default([])
@@ -223,4 +226,14 @@ type NavLink {
 type SubLink {
   label String?
   href  String?
+}
+model Schedule {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  title     String
+  type      String   @default("meeting")
+  date      DateTime
+  startTime String
+  endTime   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

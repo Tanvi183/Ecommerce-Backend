@@ -238,6 +238,12 @@ const createProduct = async (req, res) => {
       data.stockStatus = computeStockStatus(data.stock);
     }
 
+    // Map relations from frontend payload to Prisma fields
+    if (data.category !== undefined) { data.categoryId = data.category; delete data.category; }
+    if (data.subCategory !== undefined) { data.subCategoryId = data.subCategory || null; delete data.subCategory; }
+    if (data.subSubCategory !== undefined) { data.subSubCategoryId = data.subSubCategory || null; delete data.subSubCategory; }
+    if (data.brand !== undefined) { data.brandId = data.brand || null; delete data.brand; }
+
     const product = await prisma.product.create({ data });
     res.status(201).json({ success: true, data: product, message: 'Product created successfully' });
   } catch (error) {
@@ -255,6 +261,12 @@ const updateProduct = async (req, res) => {
     if (data.stock !== undefined) {
       data.stockStatus = computeStockStatus(data.stock);
     }
+
+    // Map relations from frontend payload to Prisma fields
+    if (data.category !== undefined) { data.categoryId = data.category; delete data.category; }
+    if (data.subCategory !== undefined) { data.subCategoryId = data.subCategory || null; delete data.subCategory; }
+    if (data.subSubCategory !== undefined) { data.subSubCategoryId = data.subSubCategory || null; delete data.subSubCategory; }
+    if (data.brand !== undefined) { data.brandId = data.brand || null; delete data.brand; }
 
     // prisma update will throw error if not found, so we check first or just try-catch
     const productExists = await prisma.product.findUnique({ where: { id: req.params.id } });
