@@ -17,7 +17,10 @@ app.use(helmet());
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'https://ecommerce-frontend-nine-sooty.vercel.app'
+  ],
   credentials: true, // required to send and receive cookies cross-origin
 }));
 
@@ -50,3 +53,5 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+module.exports = app;
